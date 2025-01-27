@@ -1,0 +1,25 @@
+{
+    "name": "luminee/schedule",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Luminee\\Schedule\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "luminee"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=7.0",
+        "laravel/framework": " 5.5.*"
+    },
+    "config": {
+        "allow-plugins": {
+            "kylekatarnls/update-helper": true
+        }
+    }
+}
