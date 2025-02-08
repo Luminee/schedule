@@ -3,6 +3,7 @@
 namespace Luminee\Schedule;
 
 use Illuminate\Support\ServiceProvider;
+use Luminee\Schedule\Console\Commands\ScheduleChainListCommand;
 use Luminee\Schedule\Console\Commands\ScheduleChainRunCommand;
 use Luminee\Schedule\Scheduling\Schedule;
 
@@ -14,6 +15,10 @@ class ScheduleServiceProvider extends ServiceProvider
             return new ScheduleChainRunCommand($this->app->make(Schedule::class));
         });
 
-        $this->commands('luminee.schedule.command.schedule-chain:run');
+        $this->app->singleton('luminee.schedule.command.schedule-chain:list', function ($app) {
+            return new ScheduleChainListCommand($this->app->make(Schedule::class));
+        });
+
+        $this->commands('luminee.schedule.command.schedule-chain:list');
     }
 }

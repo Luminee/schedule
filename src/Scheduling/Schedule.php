@@ -19,6 +19,16 @@ class Schedule
     protected $events = [];
 
     /**
+     * @var Chain[]
+     */
+    protected $chains = [];
+
+    /**
+     * @var Chain
+     */
+    protected $currentChain;
+
+    /**
      * The mutex implementation.
      *
      * @var \Illuminate\Console\Scheduling\Mutex
@@ -39,6 +49,25 @@ class Schedule
             : $container->make(CacheMutex::class);
     }
 
+    public function newChain($name): self
+    {
+        $this->chains[] = $this->currentChain = new Chain($name);
+
+        return $this;
+    }
+
+    public function switchChain($name): self
+    {
+        foreach ($this->chains as $chain) {
+            if ($chain->getName() === $name) {
+                $this->currentChain = $chain;
+                return $this;
+            }
+        }
+
+        return $this;
+    }
+
     /**
      * Add a new callback event to the schedule.
      *
@@ -51,6 +80,8 @@ class Schedule
         $this->events[] = $event = new CallbackEvent(
             $this->mutex, $callback, $parameters
         );
+
+        $event->bindChain($this->currentChain);
 
         return $event;
     }
@@ -108,6 +139,8 @@ class Schedule
 
         $this->events[] = $event = new Event($this->mutex, $command);
 
+        $event->bindChain($this->currentChain);
+
         return $event;
     }
 
@@ -148,8 +181,16 @@ class Schedule
      *
      * @return Event[]
      */
-    public function events()
+    public function events(): array
     {
         return $this->events;
+    }
+
+    /**
+     * @return Chain[]
+     */
+    public function chains(): array
+    {
+        return $this->chains;
     }
 }
