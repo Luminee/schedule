@@ -49,9 +49,13 @@ class Schedule
             : $container->make(CacheMutex::class);
     }
 
-    public function newChain($name): self
+    public function newChain($name, $callback = null): self
     {
         $this->chains[] = $this->currentChain = new Chain($name);
+
+        if (is_callable($callback)) {
+            $callback($this->currentChain);
+        }
 
         return $this;
     }
