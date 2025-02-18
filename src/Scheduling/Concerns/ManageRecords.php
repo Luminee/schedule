@@ -7,21 +7,37 @@ use Illuminate\Support\Facades\DB;
 
 trait ManageRecords
 {
+    public function setRecordUndo($record)
+    {
+        $record['status'] = 0;
+        $this->setRecordStatus($record);
+    }
+
     public function setRecordDoing($record)
     {
         $record['status'] = 1;
         $this->setRecordStatus($record);
     }
 
-    public function setRecordDone($record)
+    public function setRecordDone($record, $hasRedo = false)
     {
         $record['status'] = 2;
+
+        if (array_key_exists('has_redo', $record)) {
+            $record['has_redo'] += $hasRedo ? 1 : 0;
+        }
+
         $this->setRecordStatus($record);
     }
 
-    public function setRecordFailed($record)
+    public function setRecordFailed($record, $hasRedo = false)
     {
         $record['status'] = 9;
+
+        if (array_key_exists('has_redo', $record)) {
+            $record['has_redo'] += $hasRedo ? 1 : 0;
+        }
+
         $this->setRecordStatus($record);
     }
 

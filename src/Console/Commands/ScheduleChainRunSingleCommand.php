@@ -48,6 +48,21 @@ class ScheduleChainRunSingleCommand extends Command
     protected $namedEvents;
 
     /**
+     * @var array
+     */
+    protected $executedEvents = [];
+
+    /**
+     * @var bool
+     */
+    protected $chainBlocked = false;
+
+    /**
+     * @var bool
+     */
+    protected $eventsRun = false;
+
+    /**
      * Create a new command instance.
      *
      * @param Schedule $schedule
@@ -77,11 +92,7 @@ class ScheduleChainRunSingleCommand extends Command
             return;
         }
 
-        $eventsRun = $this->handleChain($chain, collect($this->schedule->events()));
-
-        if (!$eventsRun) {
-            $this->info("No scheduled commands {$inChain} are ready to run.");
-        }
+        $this->handleChain($chain, collect($this->schedule->events()));
     }
 
     protected function findChain()
@@ -101,34 +112,66 @@ class ScheduleChainRunSingleCommand extends Command
 
     protected function handleChain($chain, $events): bool
     {
-        $this->line('<info>Running scheduled chain:</info> ' . $chain->getName());
-
         $this->chainRecord = $chainRecord = $chain->getChainRecord();
 
-        if ($chainRecord['status'] === 2) {
+        if ($chainRecord['status'] === 1) {
+            $this->outputChainStatus($chain, 'comment', 'running');
+
             return false;
         }
+
+        if ($chainRecord['status'] === 2) {
+            $this->outputChainStatus($chain, 'info', 'done');
+
+            return false;
+        }
+
+        if ($chainRecord['status'] === 9) {
+            $this->outputChainStatus($chain, 'error', 'failed');
+
+            return false;
+        }
+
+        $this->line("\r\n<info>Running scheduled chain:</info> " . $chain->getName());
 
         if ($chainRecord['status'] === 0) {
             $chain->setRecordDoing($chainRecord);
         }
 
-        $eventsRun = false;
-
         $this->namedEvents = $events->keyBy(function ($event) {
             return $event->getEventName();
         });
 
+        $this->chainBlocked = $this->eventsRun = false;
+
+        $this->executedEvents = [];
+
         foreach ($events as $event) {
-            $eventsRun = $this->handleSchedule($event) || $eventsRun;
+            $this->handleSchedule($event);
         }
 
-        $chain->setRecordDone($chainRecord);
+        if ($this->chainBlocked) {
+            $chain->setRecordFailed($chainRecord);
+        } else {
+            $chain->setRecordDone($chainRecord);
+        }
 
-        return $eventsRun;
+
+        if (!$this->eventsRun) {
+            $this->line("<question>Schedule chain</question> " . $chain->getName() .
+                " <question>has no event success.</question>");
+        }
+
+        return $this->eventsRun;
     }
 
-    protected function handleSchedule($event): bool
+    protected function outputChainStatus($chain, $style, $status)
+    {
+        $this->line("<$style>Schedule chain</$style> " . $chain->getName() .
+            " <$style>is already $status.</$style>");
+    }
+
+    protected function handleSchedule($event, $redo = false): bool
     {
         $chainRecord = $this->chainRecord;
 
@@ -142,8 +185,34 @@ class ScheduleChainRunSingleCommand extends Command
 
         $record = $event->getScheduleRecord($chainRecord, $eventName = $event->getEventName());
 
-        if ($record['status'] === 2) {
+        $hasRedo = false;
+
+        if ($this->chainBlocked) {
+            if (!in_array($eventName, $this->executedEvents)) {
+                $this->outputStatus($eventName, $event, 'comment', 'Blocked');
+            }
+
             return false;
+        }
+
+        if ($record['status'] === 2) {
+            if (!$redo) {
+                return true;
+            }
+
+            $hasRedo = true;
+
+            $event->setRecordDoing($record);
+        }
+
+        if ($record['status'] === 9) {
+            if (!$redo) {
+                return !$event->isBlocked();
+            }
+
+            $hasRedo = true;
+
+            $event->setRecordDoing($record);
         }
 
         if ($record['status'] === 0) {
@@ -151,43 +220,56 @@ class ScheduleChainRunSingleCommand extends Command
         }
 
         if (!$this->runDepends($event, $record)) {
+            $event->setRecordUndo($record);
+
+            $this->outputStatus($eventName, $event, 'comment', 'Blocked');
+
             return false;
         }
-
-        $this->line('<info>Running scheduled command:</info> ' . $eventName . ' ' . $event->getSummaryForDisplay());
 
         try {
             $event->run($this->laravel);
 
-            $event->setRecordDone($record);
+            $event->setRecordDone($record, $hasRedo);
+
+            $this->outputStatus($eventName, $event, 'info', 'Successfully');
+
+            $this->eventsRun = true;
 
         } catch (Exception $e) {
             $this->error($e->getMessage());
 
-            $event->setRecordFailed($record);
+            $event->setRecordFailed($record, $hasRedo);
+
+            $this->outputStatus($eventName, $event, 'error', 'Failed');
 
             if ($event->isBlocked()) {
-                return false;
+                $this->chainBlocked = true;
             }
         }
 
-        $this->runLeads($event);
+        $this->executedEvents[] = $eventName;
 
-        return true;
+        if (!$this->runLeads($event)) {
+            return false;
+        }
+
+        return !$this->chainBlocked;
+    }
+
+    protected function outputStatus($eventName, $event, $style, $status)
+    {
+        $styledStatus = " <$style>$status</$style>";
+
+        $this->line("<$style>Run scheduled command:</$style> " .
+            $eventName . ' ' . $event->getSummaryForDisplay() . $styledStatus);
     }
 
     protected function runDepends($event, $record): bool
     {
-        if (($runDepends = $event->runDepends($this->chainRecord)) === false) {
-            $event->setRecordFailed($record);
+        $dependsRun = true;
 
-            $this->error('Run failed because of depends error.');
-
-            return false;
-        }
-
-
-        foreach ($runDepends as $runDepend) {
+        foreach ($event->getDependsOn() as $runDepend) {
             if (!isset($this->namedEvents[$runDepend])) {
                 $event->setRecordFailed($record);
 
@@ -196,26 +278,30 @@ class ScheduleChainRunSingleCommand extends Command
                 return false;
             }
 
-            $this->handleSchedule($this->namedEvents[$runDepend]);
+            $dependsRun = $this->handleSchedule(
+                    $this->namedEvents[$runDepend],
+                    $event->isNeedRedo()
+                ) && $dependsRun;
         }
 
-        return true;
+        return $dependsRun;
     }
 
     protected function runLeads($event): bool
     {
-        if (empty($runLeads = $event->runLeads($this->chainRecord))) {
-            return true;
-        }
+        $leadsRun = true;
 
-        foreach ($runLeads as $runLead) {
+        foreach ($event->getLeads() as $runLead) {
             if (!isset($this->namedEvents[$runLead])) {
                 $this->error('Run follow ' . $runLead . ' not found.');
 
-                continue;
+                return false;
             }
 
-            $this->handleSchedule($this->namedEvents[$runLead]);
+            $leadsRun = $this->handleSchedule(
+                    $this->namedEvents[$runLead],
+                    $event->isNeedRedo()
+                ) && $leadsRun;
         }
 
         return true;
